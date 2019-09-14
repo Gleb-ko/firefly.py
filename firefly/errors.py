@@ -1,0 +1,1 @@
+class InvalidCookiesError(Exception): pass
