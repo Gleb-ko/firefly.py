@@ -1,5 +1,8 @@
 class Endpoints:
     tasks = "api/v2/taskListing/view/self/tasks/filterBy"
+    task = "set-tasks/{task_id}"
+    responses = "_api/1.0/tasks/{task_id}/responses"
+    
 
 def headers(url,content,cookies,content_type="json",accept="application/json, text/plain, */*"):
     """

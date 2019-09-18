@@ -35,12 +35,18 @@ class Client:
         )
 
         for idx,task in enumerate(response.json().get("items",tuple())):
-            if len(self.tasks)-1 == (page)*self.filter.page_size+idx+1:
-                self.tasks[(page)*self.filter.page_size+idx] = _task.from_json(task)
+            if len(self.tasks)-1 == (page)*self.filter.page_size+idx:
+                self.tasks[(page)*self.filter.page_size+idx] = _task._from_json(self,task)
             else:
-                while not len(self.tasks)-1 == (page)*self.filter.page_size+idx+1:
+                while not len(self.tasks)-1 == (page)*self.filter.page_size+idx:
                     self.tasks.append(None)
-                self.tasks[(page)*self.filter.page_size+idx] = _task.from_json(task)
+                self.tasks[(page)*self.filter.page_size+idx] = _task._from_json(self,task)
+        
+        return {
+            "total": response.json()["totalCount"],
+            "start": response.json()["fromIndex"],
+            "end": response.json()["toIndex"]
+        }
         
 
     
@@ -53,12 +59,22 @@ class Client:
         except:
             raise InvalidCookiesError
     
-    def update(self,new_thread=False,on_complete=None):
+    def update(self,new_thread=False,display_interval=1,on_update=None,on_update_kwargs={},on_complete=None,on_complete_kwargs={}):
         if new_thread:
             _thread.start_new_thread(self.update,(False,on_complete))
             return
         
-        
+        total_tasks = self._get_tasks()["total"]
+        for x in range(int((total_tasks-self.filter.page_size)/self.filter.page_size)+1):
+            self._get_tasks(x+1)
+            if (x+2)%display_interval == 0 and callable(on_update):
+                kwargs = {"page":x+2,"page_size":self.filter.page_size,**on_update_kwargs.copy()}
+                on_update(**kwargs)
+        if callable(on_complete):
+            kwargs = {"total":len(self.tasks),**on_complete_kwargs.copy()}
+            on_complete(**kwargs)
+
+
     
 
 

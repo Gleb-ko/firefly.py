@@ -3,40 +3,31 @@ from typing import List as _list
 from typing import Any as _any
 
 from datetime import datetime as _datetime
+from urllib.parse import quote_plus as _quote_plus
+import requests as _requests
+import re as _re
+import json as _json
 
+from .endpoints import headers as _headers
+from .endpoints import Endpoints as _endpoints
 from .Person import Person as _person
 from .Addresse import Addresse as _addresse
 from .Mark import Mark as _mark
 
 class Task:
-    def __init__(self,
-                Id,title,setter,student,addressees,due_date,
-                set_date=_datetime.now(),
-                mark=_mark.none(),
-                last_marked_as_done_by=_person.none(),
-                personal=False,
-                excused=False,
-                done=False,
-                read=False,
-                archived=False,
-                resubmission_required=False,
-                file_submission_required=False,
-                file_submission_enabled=True,
-                description_contains_questions=False):
+    def _set_flags(self,excused,done,read,archived,resubmission_required,file_submission_required,file_submission_enabled,description_contains_questions):
+        """Set flags of task
         
-        self.id = Id
-        self.title = title
-        self.setter = setter
-        self.student = student
-        self.addressees = addressees
-        self.set_date = set_date
-        self.due_date = due_date
-        self.mark = mark
-
-        self._set_flags(personal,excused,done,read,archived,resubmission_required,file_submission_required,file_submission_enabled,description_contains_questions)
-        
-    def _set_flags(self,personal,excused,done,read,archived,resubmission_required,file_submission_required,file_submission_enabled,description_contains_questions):
-        self.personal = personal
+        Arguments:
+            excused {bool} -- Is the task excused by the setter
+            done {bool} -- Is the task done
+            read {bool} -- Is the task read
+            archived {bool} -- Is the task archived
+            resubmission_required {bool} -- Is resubmission required
+            file_submission_required {bool} -- Is file submission required
+            file_submission_enabled {bool} -- Is file submission enabled
+            description_contains_questions {bool} -- Does description contain questions
+        """
         self.excused = excused
         self.done = done
         self.read = read
@@ -47,12 +38,20 @@ class Task:
         self.description_contains_questions = description_contains_questions
 
     @classmethod
-    def from_json(self,json:_dict[str,_any],**kwargs):
-        task_json = json.copy()
-        for key in kwargs:
-            task_json[key] = kwargs[key] # Allows to override elements in the JSON
+    def _from_json(self,client,json,**kwargs):
+        """Make Task from JSON
+        
+        Arguments:
+            client {Client} -- The client being used
+            json {dict[str,any]} -- The JSON to use
+        
+        Returns:
+            Task -- The task
+        """
+        task_json = {**json.copy(), **kwargs}  # Allows to override elements in the JSON
         
         return Task(
+            client=client,
             Id=task_json["id"],
             title=task_json["title"],
             setter=_person.from_json(task_json["setter"]),
@@ -70,7 +69,6 @@ class Task:
             ),
             mark=_mark.from_json(task_json["mark"]),
             last_marked_as_done_by=_person.from_json(task_json["lastMarkedAsDoneBy"]),
-            personal=task_json.get("isPersonalTask",False),
             excused=task_json.get("isExcused",False),
             done=task_json.get("isDone",False),
             read=not task_json.get("isUnread",False),
@@ -81,6 +79,126 @@ class Task:
             description_contains_questions=task_json.get("descriptionContainsQuestions",False)
         )
 
+    def _set_done(self,value):
+        """Set task as done or undone
+        
+        Arguments:
+            value {bool} -- Done [True] or undone [False]
+        """
+        url = self.client.url+_endpoints.responses.format(task_id=self.id)
+        data = "data="+_quote_plus(_json.dumps({
+            "recipient": {
+                "type": "user",
+                "guid": self.student.guid
+            },
+            "event": {
+                "type": {True:"mark-as-done",False:"mark-as-undone"}[value],
+                "feedback": "",
+                "sent": _datetime.now().strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "author": self.student.guid
+            }
+        }).replace(" ",""))
+        headers = {
+            **_headers(url,content=data,cookies=self.client._formated_cookies,content_type="x-www-form-urlencoded; charset=UTF-8",accept="*/*"),
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        status_code = _requests.post(url,data=data,headers=headers).status_code
+        if status_code < 300 and status_code >= 200:
+            self.done = value
+        
+
+    
+    def __init__(self,
+                client,Id,title,setter,student,addressees,due_date,
+                set_date=_datetime.now(),
+                mark=_mark.none(),
+                last_marked_as_done_by=_person.none(),
+                excused=False,
+                done=False,
+                read=False,
+                archived=False,
+                resubmission_required=False,
+                file_submission_required=False,
+                file_submission_enabled=True,
+                description_contains_questions=False):
+        
+        self.client = client
+        self.id = Id
+        self.title = title
+        self.setter = setter
+        self.student = student
+        self.addressees = addressees
+        self.set_date = set_date
+        self.due_date = due_date
+        self.mark = mark
+
+        self._description = None
+
+        self._set_flags(excused,done,read,archived,resubmission_required,file_submission_required,file_submission_enabled,description_contains_questions)
+
+
+    @property
+    def description(self):
+        # HACK -- Currently it retreives description from HTML. Try to find an endpoint for getting the description, if possible
+        if self._description == None:
+            url = self.client.url+_endpoints.task.format(task_id=self.id)
+            headers = _headers(url,content="",cookies=self.client._formated_cookies)
+            page = _requests.get(url,headers=headers).content.decode("utf-8").replace("\n","<br/>").replace("\\r\\n","<br/>")
+            description_html = _re.findall("ffComponent[^>]*>(((?!</div>).)*)(?=</div>)",page)[0][0]
+            description = _re.sub("<((?!br)[^>])*>","",description_html)
+            description = description.replace("&amp;nbsp;","").replace("<br/>","\n").replace("<br>","\n").replace("\\&quot;","\"")
+            self._description = description
+        return self._description
+
+    @property
+    def personal(self):
+        return self.setter == self.student
+
+    
+    
+    def update_description(self):
+        """Update the description from firefly
+        
+        Returns:
+            string -- The updated description
+        """
+        self._description = None
+        return self.description
+    
+    def toggle_done(self):
+        self._set_done(not self.done)
+
+    def mark_done(self):
+        self._set_done(True)
+
+    def mark_undone(self):
+        self._set_done(False)
+
+    def send_comment(self,message):
+        """Set task as done or undone
+        
+        Arguments:
+            message {str} -- Message to send
+        """
+        url = self.client.url+_endpoints.responses.format(task_id=self.id)
+        data = "data="+_quote_plus(_json.dumps({
+            "recipient": {
+                "type": "user",
+                "guid": self.student.guid
+            },
+            "event": {
+                "type": "comment",
+                "message": message,
+                "feedback": "",
+                "sent": _datetime.now().strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "author": self.student.guid
+            }
+        }).replace(" ",""))
+        headers = {
+            **_headers(url,content=data,cookies=self.client._formated_cookies,content_type="x-www-form-urlencoded; charset=UTF-8",accept="*/*"),
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        _requests.post(url,data=data,headers=headers)
         
 
 
