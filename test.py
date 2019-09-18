@@ -1,5 +1,5 @@
 import firefly as ff
-client = ff.Client("https://wincoll.fireflycloud.net/") # e.g. https://school.fireflycloud.net/
+client = ff.Client(input("Firefly url: ")) # e.g. https://school.fireflycloud.net/
 client.set_cookies(input("Cookies: "))
 
 client.filter.sorting = ff.task.TaskFilter.Sorting(
